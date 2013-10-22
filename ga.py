@@ -1,5 +1,9 @@
 import random
-from math import floor
+from collections import deque
+from functools import partial
+
+basetwo = partial(int, base=2)
+
 
 class GAException(Exception):
 
@@ -10,23 +14,6 @@ class GAException(Exception):
         return repr(self.value)
 
 
-# class Gene():
-
-#     def __init__(self, *phenotype):
-#         self.phenotype = phenotype
-
-#     def encode(self):
-#         """Encode the genes to a bitstring"""
-#         enc = ""
-#         for genome in self.phenotype:
-#             if isinstance(genome, str):
-#                 for c in genome:
-#                     enc = "".join([enc, bin(ord(c))])
-#             elif isinstance(genome, (int, hex)):
-#                 enc = "".join([enc, bin(genome)])
-#         return enc[2:]
-
-
 class Chromosome():
 
     def __init__(self, *genotype):
@@ -35,7 +22,7 @@ class Chromosome():
         self.bitlist = []
         self.types = []
 
-        self.encode(genotype)
+        self.encode(genotype)        
 
     def encode(self, genotype):
         enc = ""
@@ -50,10 +37,11 @@ class Chromosome():
                 # check struct etc...
             elif isinstance(gene, str):
                 for c in gene:
-                    tmp = bin(ord(c))[2:]
+                    tmp = deque(bin(ord(c))[2:])
                     while len(tmp) < 8:
-                        tmp = "".join(['0', tmp])                    
-                    enc = "".join([enc, tmp])                
+                        tmp.appendleft('0')
+                    tmp.appendleft(enc)
+                    enc = "".join(tmp)
             
             self.bitlist.append(enc)
             self.types.append(type(gene))
@@ -62,16 +50,26 @@ class Chromosome():
         decoded = []
         for i, t in enumerate(self.types):
             if t == int:
-                decoded.append(t(self.bitlist[i], 2))
+                decoded.append(basetwo(self.bitlist[i]))
             elif t == str:
                 string = ""
                 for j in range(int(len(self.bitlist[i])/8)):
-                    string = "".join([string, chr(int(self.bitlist[i][j*8:(j+1)*8], 2))])
+                    string = "".join([string, chr(basetwo(self.bitlist[i][j*8:(j+1)*8]))])
                 decoded.append(string)
         return decoded
 
     def bitstring(self):
-        return "".join(self.bitlist)
+        tmp = deque()
+        for i, x in enumerate(self.bitlist):
+            if self.types[i] == int and len(x) < 8:
+                tmpX = deque(x)
+                while len(tmpX) < 8:
+                    tmpX.appendleft('0')
+
+                tmp.append("".join(tmpX))
+            else:
+                tmp.append(x)
+        return "".join(tmp)
 
     def __len__(self):
         return len(self.bitlist)
@@ -85,6 +83,7 @@ class GeneticAlgorithm():
         self.crossrate = crossrate
 
         self._initPopulation()
+        self.calcMaxFitness()
 
     def _initPopulation(self):
         """creates the initial random population"""
@@ -93,9 +92,9 @@ class GeneticAlgorithm():
         for i in range(self.popSize):           
             bitstring = random.getrandbits(len(self.goal.bitstring()))
 
-            bitstring = list(str(bin(bitstring))[2:])
+            bitstring = deque(str(bin(bitstring))[2:])
             while len(bitstring) < len(self.goal.bitstring()):
-                bitstring = ['0'] + bitstring
+                bitstring.appendleft('0')
 
             bitstring = "".join(bitstring)
             population.append(self.createChromosome(self.goal, bitstring))
@@ -105,45 +104,67 @@ class GeneticAlgorithm():
     def createChromosome(self, parent, bitstring):
         args = []
         counter = 0
+        totalbits = []
         for i, bits in enumerate(parent.bitlist):
-            bitslice = bitstring[counter:counter+len(bits)]
+            if parent.types[i] == int:
+                totalbits.append(8)
+            elif parent.types[i] == str:
+                totalbits.append(len(bits))
+
+        for i, bits in enumerate(totalbits):
+            bitslice = bitstring[counter:counter+bits]
             args.append(self.decode(bitslice, parent.types[i]))
-            counter = len(bits)
+            counter += bits
 
         return Chromosome(args)
 
     def decode(self, bitstring, type):
         decoded = None
         if type == int:
-            decoded = int(bitstring, 2)
+            decoded = basetwo(bitstring)
         elif type == str:
             string = ""
-            for j in range(int(len(bitstring)/8)):
-                string = "".join([string, chr(int(bitstring[j*8:(j+1)*8], 2))])
+            for i in range(int(len(bitstring)/8)):
+                string = "".join([string, chr(basetwo(bitstring[i*8:(i+1)*8]))])
             decoded = string
         return decoded
 
     def rouletteSelection(self):
         roulette = []
-        fitSum = sum([x.fitness for x in self.population])
+        fitsum = sum(x.fitness for x in self.population)
         for i, ch in enumerate(self.population):
-            roulette += [i]*((floor(100*ch.fitness/fitSum if fitSum != 0 else 1)+1))
+            score = max(round(100*ch.fitness*fitsum/self.maxFitness), 1)
+            roulette += [i]*score
 
         a = self.population[random.choice(roulette)]
         b = a
         while b == a:
             b = self.population[random.choice(roulette)]
 
-        #print(a.decode(), b.decode())
         return (a, b)
 
-    def evolve(self):
+    def evolve(self, elitism = False):
         a, b = self.rouletteSelection()
 
         newPop = []
         for i in range(int(self.popSize/2)):
             newPop += self.crossover(self.mutate(a), self.mutate(b))
-            
+        
+        if elitism:
+            for i in range(2):
+                worst = newPop[0]
+                for i, x in enumerate(newPop):
+                    if x.fitness < worst.fitness:
+                        worst = x
+
+                best = self.population[0]
+                for i, x in enumerate(self.population):
+                    if x.fitness > best.fitness:
+                        best = x
+
+                self.population.remove(best)
+                newPop.remove(worst)
+                newPop.append(best)                
 
         self.population = newPop
 
@@ -153,16 +174,19 @@ class GeneticAlgorithm():
             rand = random.random()
             goal = self.goal.bitstring()
 
-            ab = a.bitstring()
-            bb = b.bitstring()
+            ab = deque(a.bitstring())
+            bb = deque(b.bitstring())
 
             crosspoint = round(len(max(ab,bb))*(rand))
-            
+
             # Prevent the chromosomes from shrinking
-            while len(ab) < len(bb):
-                ab = "".join(['0', ab])
-            while len(bb) < len(ab):
-                bb = "".join(['0', bb])
+            # while len(ab) < len(bb):
+            #     ab.appendleft('0')
+            # while len(bb) < len(ab):
+            #     bb.appendleft('0')
+
+            ab = "".join(ab)
+            bb = "".join(bb)
 
             achild = self.createChromosome(a, ab[:crosspoint]+bb[crosspoint:])
             bchild = self.createChromosome(b, bb[:crosspoint]+ab[crosspoint:])
@@ -173,11 +197,11 @@ class GeneticAlgorithm():
 
     def mutate(self, chromosome):
         """flip a random bit in the chromosome"""
-        mut = list(chromosome.bitstring())
-        while len(mut) < len(self.goal.bitstring()):
-            mut = ['0'] + mut
+        mut = deque(chromosome.bitstring())
+        # while len(mut) < len(self.goal.bitstring()):
+        #     mut.appendleft('0')
 
-        for i in range(len(mut)):
+        for i, x in enumerate(mut):
             if random.random() < self.mutrate:
                 mut[i] = '0' if mut[i] == '1' else '1'
 
@@ -185,45 +209,57 @@ class GeneticAlgorithm():
 
         return self.createChromosome(chromosome, mut)
 
-    # def fit(self):
-    #     """adjust the fitness of each chromosome"""
-    #     for ch in self.population:
-    #         goal = int(self.goal.bitstring(), 2)
-    #         chSc = int(ch.bitstring(), 2)
-    #         ch.fitness = round(goal/(chSc if chSc != 0 else 1), 2)
+    def calcMaxFitness(self):
+        goal = self.goal.bitstring()
+
+        maxFitness = 0.0
+        maxFitnessCount = 8
+        for i, x in enumerate(goal):
+            maxFitness += 1.0*maxFitnessCount
+            maxFitnessCount -=1
+            if i % 8 == 0:
+                maxFitnessCount = 8
+
+        self.maxFitness = maxFitness
 
     def fit(self):
         """adjust the fitness of each chromosome"""
         goal = self.goal.bitstring()
-        step = 1/len(goal)
+
         for ch in self.population:
-            bitstring = ch.bitstring()
+            bitstring = deque(ch.bitstring())
 
             fitness = 0.0
-            while len(bitstring) < len(goal):
-                bitstring = "".join(['0', bitstring])
+            # while len(bitstring) < len(goal):
+            #     bitstring.appendleft('0')
 
-            for i in range(len(bitstring)):
+            count = 8
+            for i, x in enumerate(bitstring):
                 if bitstring[i] == goal[i]:
-                    fitness += step
+                    fitness += 1.0*count
+                    count -= 1
+                if i % 8 == 0:
+                    count = 8
 
-            ch.fitness = fitness
+            ch.fitness = fitness/self.maxFitness
 
     def run(self):
         """let mother nature have its way"""
         res = []
-        for r in range(100):
+        for r in range(1000):
             self.fit()            
             res.append([x.decode() for x in self.population])
 
             purities = [x.fitness for x in self.population]
+
+            print(max(purities))
             if 1.0 in purities:
                 index = purities.index(1.0)
                 print("finished on generation:", r)
                 print("current generation: ", [x.decode() for x in self.population])
                 return res
 
-            self.evolve()
+            self.evolve(True)
 
         print("no result...")
         return res
