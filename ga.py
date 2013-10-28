@@ -4,6 +4,36 @@ from functools import partial
 
 basetwo = partial(int, base=2)
 
+def maxFitnessColours(obj):
+    goal = obj.goal.bitstring()
+
+    maxFitness = 0.0
+    maxFitnessCount = 8
+    for i, x in enumerate(goal):
+        maxFitness += 1.0*maxFitnessCount
+        maxFitnessCount -=1
+        if i % 8 == 0:
+            maxFitnessCount = 8
+
+    return maxFitness
+
+def fitColours(obj):
+    goal = obj.goal.bitstring()
+
+    for ch in obj.population:
+        bitstring = deque(ch.bitstring())
+
+        fitness = 0.0
+        count = 8
+        for i, x in enumerate(bitstring):
+            if bitstring[i] == goal[i]:
+                fitness += 1.0*count
+                count -= 1
+            if i % 8 == 0:
+                count = 8
+
+        ch.fitness = fitness/obj.maxFitness
+
 
 class GAException(Exception):
 
@@ -76,20 +106,33 @@ class Chromosome():
 
 class GeneticAlgorithm():
 
-    def __init__(self, goal, popSize, mutrate = 10, crossrate = 70):
+    def __init__(self, goal = None, popsize = 25, mutrate = 0.005, 
+            crossrate = 75, fitnessFunc = None, maxFitness = None, 
+            elitism = True):
+        if fitnessFunc == None:
+            raise GAException("Need a fitnessfunction to operate!")
+
         self.goal = goal
-        self.popSize = popSize
+        self.popsize = popsize
         self.mutrate = mutrate
         self.crossrate = crossrate
+        self.fitnessFunc = fitnessFunc
+        self.elitism = elitism
 
+
+        #if isinstance(maxFitness, function()):
+        # elif maxFitness != None:
+        #     self.maxFitness = maxFitness
+        # else:
+        #    raise GAException("Need a specified maxFitnessvalue or a function pointer!")
+        self.maxFitness = maxFitness(self)
         self._initPopulation()
-        self.calcMaxFitness()
 
     def _initPopulation(self):
         """creates the initial random population"""
         population = []
 
-        for i in range(self.popSize):           
+        for i in range(self.popsize):           
             bitstring = random.getrandbits(len(self.goal.bitstring()))
 
             bitstring = deque(str(bin(bitstring))[2:])
@@ -143,11 +186,11 @@ class GeneticAlgorithm():
 
         return (a, b)
 
-    def evolve(self, elitism = False):
+    def evolve(self, elitism = True):
         a, b = self.rouletteSelection()
 
         newPop = []
-        for i in range(int(self.popSize/2)):
+        for i in range(int(self.popsize/2)):
             newPop += self.crossover(self.mutate(a), self.mutate(b))
         
         if elitism:
@@ -172,18 +215,11 @@ class GeneticAlgorithm():
         """mate the two chromosomes and return two children"""
         if random.random() < self.crossrate:
             rand = random.random()
-            goal = self.goal.bitstring()
 
             ab = deque(a.bitstring())
             bb = deque(b.bitstring())
 
             crosspoint = round(len(max(ab,bb))*(rand))
-
-            # Prevent the chromosomes from shrinking
-            # while len(ab) < len(bb):
-            #     ab.appendleft('0')
-            # while len(bb) < len(ab):
-            #     bb.appendleft('0')
 
             ab = "".join(ab)
             bb = "".join(bb)
@@ -198,8 +234,6 @@ class GeneticAlgorithm():
     def mutate(self, chromosome):
         """flip a random bit in the chromosome"""
         mut = deque(chromosome.bitstring())
-        # while len(mut) < len(self.goal.bitstring()):
-        #     mut.appendleft('0')
 
         for i, x in enumerate(mut):
             if random.random() < self.mutrate:
@@ -209,57 +243,23 @@ class GeneticAlgorithm():
 
         return self.createChromosome(chromosome, mut)
 
-    def calcMaxFitness(self):
-        goal = self.goal.bitstring()
-
-        maxFitness = 0.0
-        maxFitnessCount = 8
-        for i, x in enumerate(goal):
-            maxFitness += 1.0*maxFitnessCount
-            maxFitnessCount -=1
-            if i % 8 == 0:
-                maxFitnessCount = 8
-
-        self.maxFitness = maxFitness
-
-    def fit(self):
-        """adjust the fitness of each chromosome"""
-        goal = self.goal.bitstring()
-
-        for ch in self.population:
-            bitstring = deque(ch.bitstring())
-
-            fitness = 0.0
-            # while len(bitstring) < len(goal):
-            #     bitstring.appendleft('0')
-
-            count = 8
-            for i, x in enumerate(bitstring):
-                if bitstring[i] == goal[i]:
-                    fitness += 1.0*count
-                    count -= 1
-                if i % 8 == 0:
-                    count = 8
-
-            ch.fitness = fitness/self.maxFitness
-
     def run(self):
         """let mother nature have its way"""
         res = []
         for r in range(1000):
-            self.fit()            
+            self.fitnessFunc(self)            
             res.append([x.decode() for x in self.population])
 
             purities = [x.fitness for x in self.population]
 
-            print(max(purities))
+            #print(max(purities))
             if 1.0 in purities:
                 index = purities.index(1.0)
                 print("finished on generation:", r)
                 print("current generation: ", [x.decode() for x in self.population])
                 return res
 
-            self.evolve(True)
+            self.evolve(self.elitism)
 
         print("no result...")
         return res

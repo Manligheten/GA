@@ -2,11 +2,11 @@ from ga import *
 import png
 
 def main():
-    #also needs to input a fitnessfunction into GA
-    ga = GeneticAlgorithm(Chromosome(0x0f, 0xf0, 0x0f), 20, 0.005, 0.9) 
+    ga = GeneticAlgorithm(goal = Chromosome(0x00, 0x00, 0x00), popsize = 20, 
+            mutrate = 0.05, crossrate = 0.75, fitnessFunc = fitColours,
+            maxFitness = maxFitnessColours)
 
     result = ga.run()
-    #print(result)
 
     pixels = []
     for x in result:
